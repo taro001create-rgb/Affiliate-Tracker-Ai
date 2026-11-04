@@ -1,0 +1,6 @@
+{
+  "name": "Affiliate Tracker AI",
+  "description": "SaaS analytics and commission tracker for TikTok Shop, Amazon, and multi-platform affiliate creators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
