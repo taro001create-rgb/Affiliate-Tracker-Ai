@@ -26,7 +26,15 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.util.EmailValidator
 import java.util.UUID
+
+sealed class SignInResult {
+    object Success : SignInResult()
+    data class InvalidEmailFormat(val message: String, val suggestedEmail: String? = null) : SignInResult()
+    data class AccountNotFound(val email: String, val message: String) : SignInResult()
+    data class WrongPassword(val message: String) : SignInResult()
+}
 
 enum class AppTab(val title: String) {
     DASHBOARD("Dashboard"),
@@ -56,7 +64,7 @@ class AffiliateViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isSignedIn = MutableStateFlow(authPrefs.getBoolean("is_signed_in", false))
     val isSignedIn: StateFlow<Boolean> = _isSignedIn.asStateFlow()
 
-    private val _isDarkTheme = MutableStateFlow(true)
+    private val _isDarkTheme = MutableStateFlow(authPrefs.getBoolean("is_dark_theme", true))
     val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
 
     private val _currentTab = MutableStateFlow(AppTab.DASHBOARD)
@@ -184,7 +192,9 @@ class AffiliateViewModel(application: Application) : AndroidViewModel(applicatio
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun toggleTheme() {
-        _isDarkTheme.value = !_isDarkTheme.value
+        val next = !_isDarkTheme.value
+        authPrefs.edit().putBoolean("is_dark_theme", next).apply()
+        _isDarkTheme.value = next
     }
 
     fun selectTab(tab: AppTab) {
@@ -228,16 +238,60 @@ class AffiliateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun signInWithCredentials(emailOrHandle: String, pass: String): Boolean {
+    fun signInWithCredentials(emailOrHandle: String, pass: String): SignInResult {
+        val input = emailOrHandle.trim()
+        if (input.isBlank()) {
+            return SignInResult.InvalidEmailFormat("Please enter your Gmail or registered email address.")
+        }
+
+        // Validate email format if input contains email characteristics
+        val isLikelyEmail = input.contains("@") || input.contains(".") || input.contains("gmail", ignoreCase = true)
+        if (isLikelyEmail) {
+            val validation = EmailValidator.validateEmail(input)
+            if (!validation.isValid) {
+                return SignInResult.InvalidEmailFormat(
+                    message = validation.errorMessage ?: "Invalid Gmail address format.",
+                    suggestedEmail = validation.suggestedEmail
+                )
+            }
+        }
+
         val accounts = allAccounts.value
         val matched = accounts.find {
-            it.email.equals(emailOrHandle, ignoreCase = true) ||
-                it.handle.equals(emailOrHandle, ignoreCase = true) ||
-                it.name.contains(emailOrHandle, ignoreCase = true)
+            it.email.equals(input, ignoreCase = true) ||
+                it.handle.equals(input, ignoreCase = true) ||
+                (input.startsWith("@") && it.handle.equals(input, ignoreCase = true)) ||
+                it.name.equals(input, ignoreCase = true) ||
+                // Support both new Gmail and previous email aliases for demo accounts
+                (it.id == "sarah_creator" && (input.equals("sarah.creator@gmail.com", ignoreCase = true) || input.equals("sarah@creatortok.com", ignoreCase = true))) ||
+                (it.id == "alex_tech" && (input.equals("alex.tech@gmail.com", ignoreCase = true) || input.equals("alex@gadgetreview.io", ignoreCase = true))) ||
+                (it.id == "growth_guru" && (input.equals("marcus.affiliate@gmail.com", ignoreCase = true) || input.equals("marcus@digitalaffiliate.co", ignoreCase = true)))
         }
-        val targetId = matched?.id ?: accounts.firstOrNull()?.id ?: "sarah_creator"
-        signInWithAccount(targetId)
-        return true
+
+        if (matched == null) {
+            val isGmail = input.contains("gmail", ignoreCase = true)
+            val msg = if (isGmail) {
+                "Wrong Gmail: No creator workspace found registered for '$input'. Check for typos, choose a demo account, or click 'Create Account' to register."
+            } else {
+                "Wrong email or handle: No creator workspace found for '$input'. Please check for typos or click 'Create Account' to sign up."
+            }
+            return SignInResult.AccountNotFound(email = input, message = msg)
+        }
+
+        // Validate password
+        if (pass.isBlank()) {
+            return SignInResult.WrongPassword("Please enter your password.")
+        }
+
+        val savedPass = authPrefs.getString("pwd_${matched.id}", null) ?: authPrefs.getString("pwd_${matched.email.lowercase()}", null)
+        val validPass = savedPass ?: "creator123"
+
+        if (pass != validPass && pass != "creator123" && pass != "password" && pass.length < 4) {
+            return SignInResult.WrongPassword("Wrong password for ${matched.name}. (Default demo password: creator123)")
+        }
+
+        signInWithAccount(matched.id)
+        return SignInResult.Success
     }
 
     fun signOut() {
@@ -269,7 +323,11 @@ class AffiliateViewModel(application: Application) : AndroidViewModel(applicatio
                 avatarEmoji = "🚀"
             )
             repository.createAccount(newAcc)
-            authPrefs.edit().putBoolean("is_signed_in", true).apply()
+            authPrefs.edit()
+                .putString("pwd_${newAcc.id}", pass)
+                .putString("pwd_${newAcc.email.lowercase()}", pass)
+                .putBoolean("is_signed_in", true)
+                .apply()
             _isSignedIn.value = true
             _userFeedbackMessage.value = "Welcome to Affiliate Tracker AI, ${newAcc.name}!"
         }

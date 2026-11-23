@@ -31,7 +31,10 @@ class AffiliateRepository(private val context: Context) {
     private val transactionDao = database.transactionDao()
     private val userAccountDao = database.userAccountDao()
 
-    private val _currentAccountId = MutableStateFlow("sarah_creator")
+    private val prefs = context.getSharedPreferences("affiliate_auth", Context.MODE_PRIVATE)
+    private val _currentAccountId = MutableStateFlow(
+        prefs.getString("active_account_id", "sarah_creator") ?: "sarah_creator"
+    )
     val currentAccountId: StateFlow<String> = _currentAccountId.asStateFlow()
 
     init {
@@ -48,6 +51,14 @@ class AffiliateRepository(private val context: Context) {
                 val demoTransactions = SampleDataProvider.generateSampleTransactions(acc.id)
                 transactionDao.insertTransactions(demoTransactions)
             }
+        } else {
+            // Ensure demo accounts reflect updated Gmail addresses
+            for (defaultAcc in SampleDataProvider.defaultAccounts) {
+                val existing = accounts.find { it.id == defaultAcc.id }
+                if (existing != null && !existing.email.contains("gmail.com")) {
+                    userAccountDao.updateAccount(existing.copy(email = defaultAcc.email))
+                }
+            }
         }
     }
 
@@ -59,11 +70,13 @@ class AffiliateRepository(private val context: Context) {
         transactionDao.getTransactionsForAccount(accountId)
 
     suspend fun switchAccount(accountId: String) {
+        prefs.edit().putString("active_account_id", accountId).apply()
         _currentAccountId.value = accountId
     }
 
     suspend fun createAccount(account: UserAccount) = withContext(Dispatchers.IO) {
         userAccountDao.insertAccount(account)
+        prefs.edit().putString("active_account_id", account.id).apply()
         _currentAccountId.value = account.id
     }
 

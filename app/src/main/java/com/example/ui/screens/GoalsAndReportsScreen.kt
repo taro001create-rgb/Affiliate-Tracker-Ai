@@ -5,6 +5,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
 import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
@@ -67,6 +71,9 @@ import com.example.ui.components.PlatformBadge
 import com.example.ui.theme.AccentGreen
 import com.example.ui.theme.AmberPending
 import com.example.ui.theme.PrimaryPurple
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 @Composable
@@ -84,6 +91,22 @@ fun GoalsAndReportsScreen(
     val context = LocalContext.current
     var selectedSection by remember { mutableIntStateOf(0) }
     var showEditGoalsDialog by remember { mutableStateOf(false) }
+
+    val saveCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val csv = onGenerateCsv()
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.write(csv.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "Report saved to your device!", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, "Could not save CSV file.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     var editDaily by remember(currentAccount) {
         mutableStateOf(currentAccount?.dailyGoal?.toInt()?.toString() ?: "150")
@@ -216,53 +239,61 @@ fun GoalsAndReportsScreen(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
+                        Text(
+                            text = "Executive Reports",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = "Executive Reports",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                            Button(
+                                onClick = {
+                                    val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                                    saveCsvLauncher.launch("affiliate_report_$dateStr.csv")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("save_csv_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save .CSV", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
 
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        val csv = onGenerateCsv()
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        val clip = ClipData.newPlainText("Affiliate CSV", csv)
-                                        clipboard.setPrimaryClip(clip)
-                                        Toast.makeText(context, "CSV copied to clipboard!", Toast.LENGTH_SHORT).show()
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = PrimaryPurple, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Copy CSV", color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp)
-                                }
+                            Button(
+                                onClick = {
+                                    shareCsvReportFile(context, onGenerateCsv())
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("export_csv_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Share .CSV", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
 
-                                Button(
-                                    onClick = {
-                                        val csv = onGenerateCsv()
-                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_SUBJECT, "Affiliate Tracker AI - Earnings Report")
-                                            putExtra(Intent.EXTRA_TEXT, csv)
-                                        }
-                                        context.startActivity(Intent.createChooser(shareIntent, "Export Affiliate Report CSV"))
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.testTag("export_csv_button")
-                                ) {
-                                    Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Export CSV", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
+                            OutlinedButton(
+                                onClick = {
+                                    val csv = onGenerateCsv()
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("Affiliate CSV", csv)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "CSV copied to clipboard!", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy CSV", tint = PrimaryPurple, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Copy", color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                             }
                         }
 
@@ -520,10 +551,9 @@ fun GoalsAndReportsScreen(
             } else {
                 // REPORTS SECTION
                 item(key = "mobile_reports_header") {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
                             text = "Executive Summary",
@@ -532,8 +562,42 @@ fun GoalsAndReportsScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Button(
+                                onClick = {
+                                    val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                                    saveCsvLauncher.launch("affiliate_report_$dateStr.csv")
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = PrimaryPurple),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("save_csv_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("Save .CSV", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    shareCsvReportFile(context, onGenerateCsv())
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("export_csv_button")
+                            ) {
+                                Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("Share .CSV", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
                                 onClick = {
                                     val csv = onGenerateCsv()
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -541,31 +605,9 @@ fun GoalsAndReportsScreen(
                                     clipboard.setPrimaryClip(clip)
                                     Toast.makeText(context, "CSV copied to clipboard!", Toast.LENGTH_SHORT).show()
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(10.dp)
                             ) {
-                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null, tint = PrimaryPurple, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Copy CSV", color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp)
-                            }
-
-                            Button(
-                                onClick = {
-                                    val csv = onGenerateCsv()
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_SUBJECT, "Affiliate Tracker AI - Earnings Report")
-                                        putExtra(Intent.EXTRA_TEXT, csv)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Export Affiliate Report CSV"))
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.testTag("export_csv_button")
-                            ) {
-                                Icon(imageVector = Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Export CSV", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy CSV", tint = PrimaryPurple, modifier = Modifier.size(15.dp))
                             }
                         }
                     }
@@ -775,5 +817,34 @@ private fun ReportRow(
             fontWeight = if (highlight) FontWeight.ExtraBold else FontWeight.SemiBold,
             color = color ?: if (highlight) AccentGreen else MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+private fun shareCsvReportFile(context: Context, csvContent: String) {
+    try {
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val csvFile = File(exportDir, "affiliate_report_$dateStr.csv")
+        csvFile.writeText(csvContent, Charsets.UTF_8)
+
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            csvFile
+        )
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(Intent.EXTRA_SUBJECT, "Affiliate Tracker AI - Earnings Report")
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(shareIntent, "Export Affiliate Report (.CSV)"))
+    } catch (_: Exception) {
+        val fallbackIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Affiliate Tracker AI - Earnings Report")
+            putExtra(Intent.EXTRA_TEXT, csvContent)
+        }
+        context.startActivity(Intent.createChooser(fallbackIntent, "Export Affiliate Report"))
     }
 }
